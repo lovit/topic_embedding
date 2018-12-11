@@ -10,6 +10,10 @@ class RandomWalkWithRestart:
         self.outbound_matrix, self.bias, self.n_nodes = self._initialize(
             outbound_matrix, bias)
         self.idx_to_node = idx_to_node
+        if idx_to_node is None:
+            self.node_to_idx = None
+        else:
+            self.node_to_idx = {node:idx for idx, node in enumerate(idx_to_node)}
         self.max_iter = max_iter
         self.df = decaying_factor
         self.verbose = verbose
@@ -32,7 +36,7 @@ class RandomWalkWithRestart:
         x = normalize(x, norm='l1')
         return x, bias, n_nodes
 
-    def most_similar(self, query, topk=10, max_iter=-1, df=-1):
+    def most_similar(self, query, topk=10, decode=True, max_iter=-1, df=-1):
         if (type(query) == int):
             if not (0 <= query < self.n_nodes):
                 raise ValueError(
@@ -40,12 +44,15 @@ class RandomWalkWithRestart:
                         self.n_nodes))
             query_vec = np.zeros(self.n_nodes)
             query_vec[query] = 1
-        elif not isinstance(query, np.ndarray):
-            raise ValueError('query type should be int or numpy.ndarray')
-        else:
+        elif isinstance(query, np.ndarray):
             if query.shape[0] != self.n_nodes:
                 raise ValueError('query length should be {}'.format(self.n_nodes))
             query_vec = query
+        elif (self.node_to_idx is not None) and (query in self.node_to_idx):
+            query_vec = np.zeros(self.n_nodes)
+            query_vec[self.node_to_idx[query]] = 1
+        else:
+            raise ValueError('{} is irrecognizable node'.format(query))
 
         idxs, prob = random_walk_with_restart(
             self.outbound_matrix,
@@ -62,8 +69,8 @@ class RandomWalkWithRestart:
             prob = prob[:topk]
         most_similars = [(idx, p) for idx, p in zip(idxs, prob)]
 
-        if self.idx_to_nodes is not None:
-            most_similars = [(self.idx_to_nodes[idx], p) for idx, p in most_similars]
+        if (decode) and (self.idx_to_node is not None):
+            most_similars = [(self.idx_to_node[idx], p) for idx, p in most_similars]
 
         return most_similars
 
