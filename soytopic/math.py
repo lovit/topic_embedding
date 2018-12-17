@@ -47,7 +47,7 @@ def tf_to_prop_graph(X, min_score=0.75, min_cooccurrence=1,
 
     for base_idx in range(n_vocabs):
         pos_docs = X[:,base_idx].nonzero()[0]
-        pos_count = to_count(x[pos_docs])
+        pos_count = to_count(X[pos_docs])
         ref_count = total_count - pos_count
         pos_prop = to_prop(pos_count)
         ref_prop = to_prop(ref_count)
