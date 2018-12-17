@@ -10,6 +10,75 @@ from sklearn.utils.extmath import safe_sparse_dot
 from sklearn.utils.extmath import randomized_svd
 from sklearn.utils.extmath import safe_sparse_dot
 
+
+def tf_to_prop_graph(X, min_score=0.75, min_cooccurrence=1,
+    verbose=True, include_self=True, topk=-1):
+    """
+    :param X: scipy.sparse
+        Shape = (n_docs, n_terms)
+    :param min_score: float
+        Minimum co-occurrence score; pos_prop / (pos_prop + neg_prop)
+        Default is 0.75
+    :param min_cooccurrence: int
+        Mininum co-occurrence count. Default is 1
+    :param verbose: Boolean
+        If True, it shows progress status for each 100 words
+    :param include_self: Boolean
+        If True, (w0, w0) is included in graph with score 1.0.
+
+    It returns
+    ----------
+    g_prop : scipy.sparse.csr_matrix
+        Co-occurrence score matrix. Shape = (n_terms, n_terms)
+    g_count : scipy.sparse.csr_matrix
+        Co-occurrence count matrix. Shape = (n_terms, n_terms)
+    """
+
+    to_count = lambda X:np.asarray(X.sum(axis=0)).reshape(-1)
+    to_prop = lambda X: X / X.sum()
+
+    total_count = to_count(X)
+    n_vocabs = X.shape[1]
+
+    rows = []
+    cols = []
+    props = []
+    counts = []
+
+    for base_idx in range(n_vocabs):
+        pos_docs = X[:,base_idx].nonzero()[0]
+        pos_count = to_count(x[pos_docs])
+        ref_count = total_count - pos_count
+        pos_prop = to_prop(pos_count)
+        ref_prop = to_prop(ref_count)
+        prop = pos_prop / (pos_prop + ref_prop)
+
+        if min_cooccurrence > 1:
+            idx_mc = np.where(pos_count >= min_cooccurrence)[0]
+            idx_ms = np.where(prop >= min_score)[0]
+            rel_idxs = np.intersect1d(idx_mc, idx_ms)
+        else:
+            rel_idxs = np.where(prop >= min_score)[0]
+
+        for idx in rel_idxs:
+            if not include_self and idx == base_idx:
+                continue
+            rows.append(base_idx)
+            cols.append(idx)
+            props.append(prop[idx])
+            counts.append(pos_count[idx])
+
+        if verbose and base_idx % 100 == 0:
+            print('\rcreate graph %d / %d ...' % (base_idx , n_vocabs), end='')
+
+    if verbose:
+        print('\rcreate graph from %d words was done' % n_vocabs)
+
+    g_prop = csr_matrix((props, (rows, cols)), shape=(n_vocabs, n_vocabs))
+    g_count = csr_matrix((counts, (rows, cols)), shape=(n_vocabs, n_vocabs))
+
+    return g_prop, g_count
+
 def tf_to_cooccurrence(X, min_count=1, batch_size=-1):
     """
     :param X: scipy.sparse
@@ -30,7 +99,7 @@ def tf_to_cooccurrence(X, min_count=1, batch_size=-1):
     if batch_size == -1:
         C = safe_sparse_dot(XT, X)
         if min_count > 1:
-            C = C > min_count
+            C = larger_than(C, min_count)
     else:
         stacks = []
         n_batch = math.ceil(n_terms / batch_size)
@@ -39,7 +108,7 @@ def tf_to_cooccurrence(X, min_count=1, batch_size=-1):
             e = min(n_terms, (i+1) * batch_size)
             C = safe_sparse_dot(XT[b:e], X)
             if min_count > 1:
-                C = C > min_count
+                C = larger_than(C, min_count)
             stacks.append(C)
         C = vstack(stacks)
 
@@ -47,6 +116,18 @@ def tf_to_cooccurrence(X, min_count=1, batch_size=-1):
         C = C.tocsr()
 
     return C
+
+def larger_than(X, min_count):
+    rows_, cols_ = X.nonzero()
+    data_ = X.data
+    rows, cols, data = [], [], []
+    for r, c, d in zip(rows_, cols_, data_):
+        if d < min_count:
+            continue
+        rows.append(r)
+        cols.append(c)
+        data.append(d)
+    return csr_matrix((data, (rows, cols)), shape=X.shape)
 
 def _as_diag(px, alpha):
     if len(px.shape) == 1:
