@@ -12,7 +12,7 @@ from sklearn.utils.extmath import safe_sparse_dot
 
 
 def tf_to_prop_graph(X, min_score=0.75, min_cooccurrence=1,
-    verbose=True, include_self=True, topk=-1):
+    verbose=True, include_self=True, topk0=-1, topk1=-1):
     """
     :param X: scipy.sparse
         Shape = (n_docs, n_terms)
@@ -25,6 +25,10 @@ def tf_to_prop_graph(X, min_score=0.75, min_cooccurrence=1,
         If True, it shows progress status for each 100 words
     :param include_self: Boolean
         If True, (w0, w0) is included in graph with score 1.0.
+    :param topk0: int
+        The number of most frequent words which are keyword candidates
+    :param topk1: int
+        The number of selected keywords
 
     It returns
     ----------
@@ -48,6 +52,11 @@ def tf_to_prop_graph(X, min_score=0.75, min_cooccurrence=1,
     for base_idx in range(n_vocabs):
         pos_docs = X[:,base_idx].nonzero()[0]
         pos_count = to_count(X[pos_docs])
+        if topk0 > 0:
+            topk0_idxs = pos_count.argsort()[-topk0:]
+            topk0_value = pos_count[topk0_idxs]
+            pos_count = np.zeros(n_vocabs)
+            pos_count[topk0_idxs] = topk0_value
         ref_count = total_count - pos_count
         pos_prop = to_prop(pos_count)
         ref_prop = to_prop(ref_count)
@@ -60,22 +69,32 @@ def tf_to_prop_graph(X, min_score=0.75, min_cooccurrence=1,
         else:
             rel_idxs = np.where(prop >= min_score)[0]
 
-        for idx in rel_idxs:
-            if not include_self and idx == base_idx:
-                continue
-            rows.append(base_idx)
-            cols.append(idx)
-            props.append(prop[idx])
-            counts.append(pos_count[idx])
+        if topk1 > 0:
+            topk1_prop = prop[rel_idxs]
+            topk1_idxs = topk1_prop.argsort()[-topk1:]
+            rel_idxs = rel_idxs[topk1_idxs]
+
+        if not include_self:
+            rel_idxs = rel_idxs[np.where(rel_idxs != base_idx)[0]]
+
+        rows.append(np.repeat(base_idx, rel_idxs.shape))
+        cols.append(rel_idxs)
+        props.append(prop[rel_idxs])
+        counts.append(pos_count[rel_idxs])
 
         if verbose and base_idx % 100 == 0:
             print('\rcreate graph %d / %d ...' % (base_idx , n_vocabs), end='')
+
+    rows = np.hstack(rows)
+    cols = np.hstack(cols)
+    props = np.hstack(props)
+    counts = np.hstack(counts)
 
     if verbose:
         print('\rcreate graph from %d words was done' % n_vocabs)
 
     g_prop = csr_matrix((props, (rows, cols)), shape=(n_vocabs, n_vocabs))
-    g_count = csr_matrix((counts, (rows, cols)), shape=(n_vocabs, n_vocabs))
+    g_count = csr_matrix((counts, (rows, cols)), shape=(n_vocabs, n_vocabs), dtype=np.int)
 
     return g_prop, g_count
 
